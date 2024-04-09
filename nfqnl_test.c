@@ -12,7 +12,14 @@
 
 #define MAX_MATCHES 10
 #define MAX_GROUP_LENGTH 100
+
 char group[MAX_GROUP_LENGTH];
+const char* netfilter_host;
+
+void usage() {
+    printf("syntax : netfilter-test <host>\n");
+    printf("sample : netfilter-test test.gilgil.net");
+}
 
 void dump(unsigned char* buf, int size) {
     int i;
@@ -24,15 +31,12 @@ void dump(unsigned char* buf, int size) {
     printf("\n");
 }
 
-/* 파싱된 패킷을 분석하여 TCP, IP, HTTP를 파싱하고 출력하는 함수 */
 void parse_packet(unsigned char* data, int size) {
-    if (data[9] == 0x06) { // 0x06은 TCP 프로토콜을 나타냄
-
-        // HTTP 데이터인지 확인
-        int ip_header_length = (data[0] & 0x0F) * 4;
-        int tcp_header_length = ((data[ip_header_length+12] & 0xF0) >> 4) * 4; // TCP 헤더 길이
-        int data_offset = ip_header_length + tcp_header_length; // 데이터 시작 위치
-        int http_data_length = size - data_offset; // HTTP 데이터 길이
+    if (data[9] == 0x06) { // 0x06 is TCP
+        int ip_header_length = (data[0] & 0x0F) * 4; // IP header len
+        int tcp_header_length = ((data[ip_header_length+12] & 0xF0) >> 4) * 4; // TCP header len
+        int data_offset = ip_header_length + tcp_header_length;
+        int http_data_length = size - data_offset;
         if (http_data_length > 0) {
             unsigned char* http_data = data + data_offset;
             regex_t reg;
@@ -45,22 +49,17 @@ void parse_packet(unsigned char* data, int size) {
                 if(matches[1].rm_so != -1) {
                     int group_length = matches[1].rm_eo - matches[1].rm_so;
                     if(group_length < MAX_GROUP_LENGTH) {
-                        strncpy(group, http_data + matches[1].rm_so, group_length);
+                        strncpy(group, http_data + matches[1].rm_so, sizeof(group));
                         group[group_length] = '\0';
-                        printf("Matched group: %s\n", group);
                     }
-                    else {
+                    else
                         fprintf(stderr, "Matched group is too long\n");
-                        exit(1);
-                    }
                 }
-                else {
+                else
                     fprintf(stderr, "No match found for group\n");
-                    exit(1);
-                }
             }
-            else printf("No found\n");
-
+            else
+                fprintf(stderr, "No match found for regex\n");
         }
     }
 }
@@ -115,9 +114,11 @@ static u_int32_t print_pkt (struct nfq_data *tb)
     ret = nfq_get_payload(tb, &data);
     if (ret >= 0) {
         printf("payload_len=%d\n", ret);
-        // dump(data, ret);
+        memset(group, 0, sizeof(group));
         parse_packet(data, ret);
     }
+    if (strncmp(netfilter_host, group, sizeof(netfilter_host)) == 0)
+        id = 0;
 
     fputc('\n', stdout);
 
@@ -129,13 +130,23 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
               struct nfq_data *nfa, void *data)
 {
     u_int32_t id = print_pkt(nfa);
+    if(id == 0) {
+        printf("[ The packet was blocked by netfilter. ]\n");
+        printf("[ Your_URL : %s, netfilter_URL : %s ]\n", group, netfilter_host);
+        return nfq_set_verdict(qh, id, NF_DROP, 0, NULL);
+    }
     printf("entering callback\n");
-    printf("%d\n", id);
     return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 }
 
 int main(int argc, char **argv)
 {
+    if(argc != 2) {
+        usage();
+        return -1;
+    }
+
+    netfilter_host = argv[1];
     struct nfq_handle *h;
     struct nfq_q_handle *qh;
     struct nfnl_handle *nh;
