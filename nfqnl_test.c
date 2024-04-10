@@ -40,7 +40,7 @@ void parse_packet(unsigned char* data, int size) {
         if (http_data_length > 0) {
             unsigned char* http_data = data + data_offset;
             regex_t reg;
-            const char * pattern = "Host: ([a-z\.]*)";
+            const char * pattern = "Host: ([a-z\\.]*)";
             regcomp(&reg, pattern, REG_EXTENDED);
 
             regmatch_t matches[MAX_MATCHES];
